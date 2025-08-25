@@ -1,0 +1,31 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isImage() {
+      return request.resource != null
+             && request.resource.contentType.matches('image/.*');
+    }
+
+    // 作品アップロード先: submissions/{topicId}/{uid}/...
+    match /submissions/{topicId}/{uid}/{allPaths=**} {
+      // 読み取りは公開（必要に応じて制限可）
+      allow read: if true;
+
+      // 書き込み（アップロード/上書き/削除）:
+      //  - 認証済み
+      //  - 自分の uid 配下のみ
+      //  - コンテンツは画像
+      //  - 10MB 以下
+      allow write: if request.auth != null
+                   && request.auth.uid == uid
+                   && (request.method == 'delete' || (isImage() && request.resource.size < 10 * 1024 * 1024));
+    }
+
+    // その他のパスは読取のみ（必要に応じて閉じる）
+    match /{all=**} {
+      allow read: if true;
+      allow write: if false;
+    }
+  }
+}
