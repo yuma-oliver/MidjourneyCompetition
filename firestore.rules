@@ -5,33 +5,39 @@ service cloud.firestore {
     function signedIn() { return request.auth != null; }
     function isSelf(uid) { return signedIn() && request.auth.uid == uid; }
 
+    // ===== users =====
+    match /users/{userId} {
+      // 自分のユーザードキュメントのみ読める（公開プロフィールにしたいなら read を緩める）
+      allow read: if isSelf(userId);
+
+      // 作成：自分の uid でのみ作成可。userUtils.js に合わせたキーを許可
+      allow create: if isSelf(userId)
+        && request.resource.data.keys().hasOnly([
+          'uid','email','username','createdAt'
+        ])
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.email is string
+        && request.resource.data.username is string
+        && request.resource.data.username.size() > 0
+        && request.resource.data.createdAt is timestamp;
+
+      // 更新/削除：自分のみ。更新時のフィールド制限をかけたい場合は hasOnly を追加
+      allow update, delete: if isSelf(userId);
+    }
+
     // ========= topics =========
     match /topics/{topicId} {
-      // 公開読み取り（必要に応じて制限可）
       allow read: if true;
-
-      // 作成：作成者=自分 + 必須フィールド/時系列を検証
-      allow create: if signedIn() && isValidTopicCreate();
-
-      // 更新：作成者のみ（必要なら検証を追加）
-      allow update: if signedIn() && resource.data.createdBy == request.auth.uid;
-
-      // 削除：作成者のみ
+      allow create: if signedIn() && request.resource.data.createdBy == request.auth.uid;
+      allow update, delete: if signedIn() && resource.data.createdBy == request.auth.uid;
       allow delete: if signedIn() && resource.data.createdBy == request.auth.uid;
 
-      // ----- submissions（フラット）: topics/{topicId}/submissions/{submissionId}
       match /submissions/{submissionId} {
-        // 読み取りは公開（必要に応じて制限可）
         allow read: if true;
-
-        // 作成：本人のみ & 形チェック
         allow create: if signedIn()
           && request.resource.data.userId == request.auth.uid
           && validSubmissionCreate();
 
-        // 更新：
-        //  (1) 投稿者本人 → imageUrl / storagePath / caption / updatedAt のみ変更可
-        //  (2) それ以外 → votes のみ変更可（要件に応じて制限可）
         allow update: if
           (
             isSelf(resource.data.userId) &&
@@ -44,24 +50,17 @@ service cloud.firestore {
             request.resource.data.diff(resource.data).changedKeys().hasOnly(['votes'])
           );
 
-        // 削除：
-        //  投稿者本人 または トピック作成者（LeftSidebar のカスケード削除用）
         allow delete: if signedIn() && (
           resource.data.userId == request.auth.uid ||
           get(/databases/$(database)/documents/topics/$(topicId)).data.createdBy == request.auth.uid
         );
       }
 
-      // ----- votes: topics/{topicId}/votes/{userId}
       match /votes/{userId} {
         allow read: if signedIn();
-
-        // 作成/更新：自分の票のみ、submissionId は必須文字列
         allow create, update: if signedIn()
           && request.auth.uid == userId
           && request.resource.data.submissionId is string;
-
-        // 削除：自分の票 または トピック作成者（カスケード削除用）
         allow delete: if signedIn() && (
           request.auth.uid == userId ||
           get(/databases/$(database)/documents/topics/$(topicId)).data.createdBy == request.auth.uid
@@ -83,10 +82,8 @@ service cloud.firestore {
       && request.resource.data.votingEndAt is timestamp
       && request.resource.data.isActive is bool
       && request.resource.data.createdBy == request.auth.uid
-      // 公開 < アップ締切 < 投票締切
       && request.resource.data.publishAt < request.resource.data.uploadEndAt
       && request.resource.data.uploadEndAt < request.resource.data.votingEndAt;
-      // createdAt は serverTimestamp() 想定（値は検証しない）
     }
 
     function validSubmissionCreate() {
@@ -98,7 +95,6 @@ service cloud.firestore {
       && request.resource.data.storagePath is string
       && (!('caption' in request.resource.data) || request.resource.data.caption is string)
       && request.resource.data.votes is number;
-      // createdAt は serverTimestamp() 想定
     }
   }
 }

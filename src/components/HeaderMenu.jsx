@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Box, Button, Menu, MenuItem, Typography } from '@mui/material';
+import { Box, Button, Divider, Menu, MenuItem, Typography } from '@mui/material';
 import { useAuth } from "../contexts/AuthProvider";
 import { signOut } from "firebase/auth";
 import { auth } from "../utils/firebase-config";
@@ -32,9 +32,6 @@ export default function HeaderMenu() {
 
   return (
     <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
-      <Typography variant="body1">
-          {user?.email || "ゲスト"} 
-      </Typography>
       <Button
         onClick={handleClick}
         sx={{ color: 'white' }}
@@ -47,6 +44,13 @@ export default function HeaderMenu() {
         onClose={handleClose}
         sx={{ width:"100%" }}
       >
+        <Typography 
+          variant="body1"
+          sx={{ ml: 1, mr: 1 }}
+        >
+            {user?.email || "ゲスト"} 
+        </Typography>
+        <Divider sx={{ mt:1 ,mb:1}}/>
         {routes.map((route) => (
           <MenuItem
             key={route.path}

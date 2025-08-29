@@ -1,8 +1,10 @@
+// src/features/topics/AddTopicDialog.jsx
 import { useState, useMemo, useCallback } from "react";
 import {
   Dialog, DialogTitle, DialogContent, DialogActions,
   TextField, Button, Stack, Alert, Chip, Divider,
-  FormControlLabel, Switch, Box, Typography
+  FormControlLabel, Switch, Box, Typography,
+  FormControl, InputLabel, Select, MenuItem
 } from "@mui/material";
 import {
   LocalizationProvider,
@@ -17,6 +19,7 @@ import customParseFormat from "dayjs/plugin/customParseFormat";
 import { collection, addDoc, serverTimestamp, Timestamp } from "firebase/firestore";
 import { db } from "@/utils/firebase-config";
 import { useAuth } from "@/contexts/AuthProvider";
+import { fetchUserDocument } from "@/utils/userUtils"; // ★ username取得用
 
 dayjs.extend(isoWeek);
 dayjs.extend(weekday);
@@ -24,7 +27,7 @@ dayjs.extend(customParseFormat);
 
 const FIXED_HOUR = 10; // 10:00運用
 
-// 指定週の月/水/金 10:00 を返す
+// 指定週の {isoWeekdayNum} 曜日 10:00 を返す（1=Mon, 3=Wed, 5=Fri）
 const weekAt = (base, isoWeekdayNum, weekOffset = 0) =>
   dayjs(base)
     .add(weekOffset, "week")
@@ -37,7 +40,7 @@ const sameWeekWaterfall = (pub) => ({
   fri: weekAt(pub, 5, 0),
 });
 
-// ★常に“今週の月曜10:00”（過去でもOK）
+// 常に“今週の月曜10:00”（過去でもOK）
 const thisMonday10 = () => weekAt(dayjs(), 1, 0);
 // 来週の月曜10:00
 const nextMonday10 = () => weekAt(dayjs(), 1, 1);
@@ -47,6 +50,16 @@ export default function AddTopicDialog({ open, onClose }) {
 
   const [title, setTitle] = useState("");
   const [desc, setDesc] = useState("");
+  const [hint, setHint] = useState("");
+  const [prompt, setPrompt] = useState("");
+
+  // ルール
+  const [aspect, setAspect] = useState("16:9");
+  const [style, setStyle] = useState("");
+  const [seed, setSeed] = useState("");
+
+  // 可視性
+  const [visibility, setVisibility] = useState("public"); // "public" | "private"
 
   // 既定値：公開＝今週の月曜10:00（過去でもOK）
   const initialPub = thisMonday10();
@@ -121,6 +134,23 @@ export default function AddTopicDialog({ open, onClose }) {
     return out.join(" ");
   };
 
+  const resetForm = () => {
+    setTitle("");
+    setDesc("");
+    setHint("");
+    setPrompt("");
+    setAspect("16:9");
+    setStyle("");
+    setSeed("");
+    setVisibility("public");
+    setPublishAt(thisMonday10());
+    const { wed, fri } = sameWeekWaterfall(thisMonday10());
+    setUploadEndAt(wed);
+    setVotingEndAt(fri);
+    setUseWeekTemplate(true);
+    setLinkDates(false);
+  };
+
   const handleSave = async () => {
     setErr("");
     if (invalid) {
@@ -129,47 +159,132 @@ export default function AddTopicDialog({ open, onClose }) {
     }
     try {
       setSubmitting(true);
-      await addDoc(collection(db, "topics"), {
+
+      // ★ 作成者の username を取得（なければ空）
+      let createdByUsername = "";
+      if (user?.uid) {
+        try {
+          const prof = await fetchUserDocument(user.uid);
+          createdByUsername = prof?.username || "";
+        } catch {
+          createdByUsername = "";
+        }
+      }
+
+      const payload = {
         title: title.trim(),
         description: desc.trim(),
+        hint: hint.trim(),
+        prompt: prompt.trim(),
+        rules: {
+          ...(aspect ? { aspect } : {}),
+          ...(style ? { style } : {}),
+          ...(seed ? { seed } : {}),
+        },
+        visibility, // "public" | "private"
+
         publishAt: Timestamp.fromDate(dayjs(publishAt).toDate()),
         uploadEndAt: Timestamp.fromDate(dayjs(uploadEndAt).toDate()),
         votingEndAt: Timestamp.fromDate(dayjs(votingEndAt).toDate()),
+
         createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
         createdBy: user?.uid || null,
+        createdByUsername, // ★ 非正規化
         isActive: true,
-      });
+      };
+
+      await addDoc(collection(db, "topics"), payload);
+
       onClose?.();
-      setTitle("");
-      setDesc("");
+      resetForm();
     } catch (e) {
-      setErr(e.message || "保存に失敗しました。");
+      setErr(e?.message || "保存に失敗しました。");
     } finally {
       setSubmitting(false);
     }
   };
 
   return (
-    <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
+    <Dialog open={open} onClose={submitting ? undefined : onClose} fullWidth maxWidth="sm">
       <DialogTitle>お題を作成</DialogTitle>
       <DialogContent>
         <Stack spacing={2} sx={{ mt: 1 }}>
           {err && <Alert severity="error">{err}</Alert>}
 
           <TextField
-            label="タイトル"
+            label="タイトル *"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             autoFocus
             required
+            fullWidth
           />
+
           <TextField
-            label="説明（任意）"
+            label="説明（概要）"
             value={desc}
             onChange={(e) => setDesc(e.target.value)}
             multiline
             minRows={2}
+            fullWidth
           />
+
+          <TextField
+            label="ヒント"
+            value={hint}
+            onChange={(e) => setHint(e.target.value)}
+            multiline
+            minRows={2}
+            fullWidth
+          />
+
+          <TextField
+            label="推奨プロンプト"
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            multiline
+            minRows={2}
+            placeholder="右サイドバーでワンクリックコピーできます"
+            fullWidth
+          />
+
+          {/* ルール */}
+          <Typography variant="overline" color="text.secondary">ルール / 推奨パラメータ</Typography>
+          <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
+            <TextField
+              label="--ar（アスペクト）"
+              value={aspect}
+              onChange={(e) => setAspect(e.target.value)}
+              fullWidth
+            />
+            <TextField
+              label="--style"
+              value={style}
+              onChange={(e) => setStyle(e.target.value)}
+              fullWidth
+            />
+            <TextField
+              label="--seed"
+              value={seed}
+              onChange={(e) => setSeed(e.target.value)}
+              fullWidth
+            />
+          </Stack>
+
+          {/* 可視性 */}
+          <FormControl fullWidth>
+            <InputLabel id="vis-label">可視性</InputLabel>
+            <Select
+              labelId="vis-label"
+              label="可視性"
+              value={visibility}
+              onChange={(e) => setVisibility(e.target.value)}
+            >
+              <MenuItem value="public">public（全員に公開）</MenuItem>
+              <MenuItem value="private">private（限定公開）</MenuItem>
+            </Select>
+          </FormControl>
 
           <LocalizationProvider dateAdapter={AdapterDayjs}>
             {/* オプション：週テンプレ固定が基本 */}
@@ -204,7 +319,6 @@ export default function AddTopicDialog({ open, onClose }) {
                   onChange={onChangePublish}
                   ampm={false}
                   minutesStep={5}
-                  // ★過去も選べるように disablePast を外す
                   slotProps={{
                     textField: {
                       fullWidth: true,
@@ -229,7 +343,6 @@ export default function AddTopicDialog({ open, onClose }) {
                   onChange={(v) => v && setUploadEndAt(dayjs(v).second(0).millisecond(0))}
                   ampm={false}
                   minutesStep={5}
-                  // minDateTime は維持（公開より前を禁止）※公開が過去でも順序は守る
                   minDateTime={dayjs(publishAt).add(1, "minute")}
                   slotProps={{
                     textField: {
@@ -278,7 +391,12 @@ export default function AddTopicDialog({ open, onClose }) {
                     minutesStep={5}
                     format="HH:mm"
                   />
-                  <Button size="small" onClick={() => setVotingEndAt(dayjs(votingEndAt).hour(FIXED_HOUR).minute(0))}>
+                  <Button
+                    size="small"
+                    onClick={() =>
+                      setVotingEndAt(dayjs(votingEndAt).hour(FIXED_HOUR).minute(0).second(0).millisecond(0))
+                    }
+                  >
                     10:00にする
                   </Button>
                 </Stack>
